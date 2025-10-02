@@ -15,26 +15,15 @@
         body { font-family: 'Roboto', sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
         #map { height: 100vh; width: 100%; }
         .control-panel {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            z-index: 1000;
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            width: 350px;
-            max-height: calc(100vh - 40px);
-            overflow-y: auto;
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 350px;
+            max-height: calc(100vh - 40px); overflow-y: auto;
         }
         .control-panel h2 { margin: 0 0 15px; font-size: 24px; font-weight: 700; color: #333; }
         .search-container { display: flex; margin-bottom: 15px; }
-        .search-container input {
-            flex-grow: 1; border: 1px solid #ddd; border-radius: 4px 0 0 4px; padding: 10px;
-        }
-        .search-container button {
-            border: none; background: #007bff; color: white; padding: 10px 15px; border-radius: 0 4px 4px 0; cursor: pointer;
-        }
+        .search-container input { flex-grow: 1; border: 1px solid #ddd; border-radius: 4px 0 0 4px; padding: 10px; }
+        .search-container button { border: none; background: #007bff; color: white; padding: 10px 15px; border-radius: 0 4px 4px 0; cursor: pointer; }
         .data-section { border-top: 1px solid #eee; padding-top: 15px; margin-top: 15px; }
         .data-section h3 { margin: 0 0 10px; font-size: 18px; color: #555; }
         .data-item { display: flex; align-items: center; margin-bottom: 8px; font-size: 16px; }
@@ -43,9 +32,10 @@
         .aqi-level-display { text-align: center; padding: 10px; border-radius: 4px; font-weight: 700; color: white; margin-bottom: 10px; }
         .loader { text-align: center; color: #888; }
         .status-badge { font-size: 12px; font-weight: 500; padding: 2px 6px; border-radius: 10px; margin-left: 8px; color: white; }
-        .status-realtime { background-color: #28a745; }
-        .status-simulated, .status-no-data-available { background-color: #ffc107; }
+        .status-real-time { background-color: #28a745; }
+        .status-simulated-error, .status-no-data-available { background-color: #ffc107; }
         .status-error, .status-auth-error { background-color: #dc3545; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
@@ -59,8 +49,35 @@
         <button id="searchButton"><i class="fa-solid fa-magnifying-glass"></i></button>
     </div>
 
-    <div id="data-display" class="loader">
-        <p>Search for a city or click the map.</p>
+    <div id="data-display">
+        <div id="initial-message" class="loader"><p>Search for a city or click the map.</p></div>
+        <div id="loading-message" class="loader hidden"><p>Fetching latest data...</p></div>
+        <div id="error-message" class="loader hidden" style="color: #dc3545;"></div>
+        
+        <div id="results-container" class="hidden">
+            <div id="aqi-level-display" class="aqi-level-display"></div>
+            <div class="data-section">
+                <h3><i class="fa-solid fa-smog"></i> Air Quality</h3>
+                <div class="data-item"><i class="fa-solid fa-wind"></i> PM2.5 <span id="pm25-value" class="value"></span></div>
+                <div class="data-item"><i class="fa-solid fa-cloud"></i> AQI (est.) <span id="aqi-value" class="value"></span></div>
+                <div class="data-item"><i class="fa-solid fa-location-dot"></i> Source <span id="source-value" class="value"></span></div>
+            </div>
+            <div class="data-section">
+                <h3><i class="fa-solid fa-cloud-sun-rain"></i> Weather</h3>
+                <div class="data-item"><i class="fa-solid fa-temperature-three-quarters"></i> Temp <span id="temp-value" class="value"></span></div>
+                <div class="data-item"><i class="fa-solid fa-droplet"></i> Humidity <span id="humidity-value" class="value"></span></div>
+                <div class="data-item"><i class="fa-solid fa-wind"></i> Wind <span id="wind-value" class="value"></span></div>
+            </div>
+            <div class="data-section">
+                <h3><i class="fa-solid fa-satellite"></i> TEMPO Satellite <span id="tempo-badge" class="status-badge"></span></h3>
+                <div class="data-item"><i class="fa-solid fa-industry"></i> NO₂ <span id="no2-value" class="value"></span></div>
+                <div class="data-item"><i class="fa-solid fa-clock"></i> Last Update <span id="last-updated-value" class="value"></span></div>
+            </div>
+            <div class="data-section">
+                <h3><i class="fa-solid fa-chart-line"></i> Forecast (6 hours)</h3>
+                <canvas id="forecastChart" width="300" height="200"></canvas>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -68,7 +85,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <script>
-    // --- Map Initialization ---
     const map = L.map('map').setView([20.5937, 78.9629], 5);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
@@ -77,34 +93,25 @@
 
     let currentMarker = null;
     let forecastChartInstance = null;
-    const dataDisplay = document.getElementById('data-display');
     const searchInput = document.getElementById('citySearchInput');
+    
+    const initialMessage = document.getElementById('initial-message');
+    const loadingMessage = document.getElementById('loading-message');
+    const errorMessage = document.getElementById('error-message');
+    const resultsContainer = document.getElementById('results-container');
 
     function createColoredIcon(color) {
-        const markerHtmlStyles = `
-            background-color: ${color};
-            width: 2rem;
-            height: 2rem;
-            display: block;
-            left: -1rem;
-            top: -1rem;
-            position: relative;
-            border-radius: 2rem 2rem 0;
-            transform: rotate(45deg);
-            border: 1px solid #FFFFFF`;
-        return L.divIcon({
-          className: "my-custom-pin",
-          iconAnchor: [0, 24],
-          popupAnchor: [0, -36],
-          html: `<span style="${markerHtmlStyles}" />`
-        })
+        const markerHtmlStyles = `background-color: ${color}; width: 2rem; height: 2rem; display: block; left: -1rem; top: -1rem; position: relative; border-radius: 2rem 2rem 0; transform: rotate(45deg); border: 1px solid #FFFFFF`;
+        return L.divIcon({ className: "my-custom-pin", iconAnchor: [0, 24], popupAnchor: [0, -36], html: `<span style="${markerHtmlStyles}" />` });
     }
 
-    // --- Fetch & Display Data ---
     async function updateDataForLocation(lat, lon) {
-        dataDisplay.innerHTML = '<p class="loader">Fetching latest data...</p>';
-        if (currentMarker) { map.removeLayer(currentMarker); }
+        initialMessage.classList.add('hidden');
+        resultsContainer.classList.add('hidden');
+        errorMessage.classList.add('hidden');
+        loadingMessage.classList.remove('hidden');
 
+        if (currentMarker) { map.removeLayer(currentMarker); }
         currentMarker = L.marker([lat, lon], { icon: createColoredIcon('gray') }).addTo(map);
         map.flyTo([lat, lon], 11);
 
@@ -112,86 +119,74 @@
             const response = await fetch(`/api/data?lat=${lat}&lon=${lon}`);
             if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
             const data = await response.json();
-
-            const markerColor = data.ground_data.level_info.color;
-            currentMarker.setIcon(createColoredIcon(markerColor));
-
             const { ground_data, weather_data, satellite_data, forecast_data } = data;
 
+            document.getElementById('aqi-level-display').style.backgroundColor = ground_data.level_info.color;
+            document.getElementById('aqi-level-display').textContent = ground_data.level_info.level;
+            document.getElementById('pm25-value').textContent = `${ground_data.pm25} µg/m³`;
+            document.getElementById('aqi-value').textContent = ground_data.aqi;
+            document.getElementById('source-value').textContent = ground_data.source;
+            document.getElementById('temp-value').textContent = `${weather_data.temp} °C`;
+            document.getElementById('humidity-value').textContent = `${weather_data.humidity}%`;
+            document.getElementById('wind-value').textContent = `${weather_data.wind_speed} km/h`;
             let tempoStatus = satellite_data.status || "Simulated";
             let statusClass = 'status-' + tempoStatus.toLowerCase().replace(/ /g, '-');
+            const tempoBadge = document.getElementById('tempo-badge');
+            tempoBadge.textContent = tempoStatus;
+            tempoBadge.className = `status-badge ${statusClass}`;
+            document.getElementById('no2-value').textContent = `${satellite_data.no2} mol/m²`;
+            document.getElementById('last-updated-value').textContent = satellite_data.last_updated;
+            currentMarker.setIcon(createColoredIcon(ground_data.level_info.color));
 
-            dataDisplay.innerHTML = `
-                <div class="aqi-level-display" style="background-color: ${ground_data.level_info.color};">
-                    ${ground_data.level_info.level}
-                </div>
-
-                <div class="data-section">
-                    <h3><i class="fa-solid fa-smog"></i> Air Quality</h3>
-                    <div class="data-item"><i class="fa-solid fa-wind"></i> PM2.5 <span class="value">${ground_data.pm25} µg/m³</span></div>
-                    <div class="data-item"><i class="fa-solid fa-cloud"></i> AQI (est.) <span class="value">${ground_data.aqi}</span></div>
-                    <div class="data-item"><i class="fa-solid fa-location-dot"></i> Source <span class="value">${ground_data.source}</span></div>
-                </div>
-
-                <div class="data-section">
-                    <h3><i class="fa-solid fa-cloud-sun-rain"></i> Weather</h3>
-                    <div class="data-item"><i class="fa-solid fa-temperature-three-quarters"></i> Temp <span class="value">${weather_data.temp} °C</span></div>
-                    <div class="data-item"><i class="fa-solid fa-droplet"></i> Humidity <span class="value">${weather_data.humidity}%</span></div>
-                    <div class="data-item"><i class="fa-solid fa-wind"></i> Wind <span class="value">${weather_data.wind_speed} km/h</span></div>
-                </div>
-
-                <div class="data-section">
-                    <h3><i class="fa-solid fa-satellite"></i> TEMPO Satellite 
-                        <span class="status-badge ${statusClass}">${tempoStatus}</span>
-                    </h3>
-                    <div class="data-item"><i class="fa-solid fa-industry"></i> NO₂ <span class="value">${satellite_data.no2} mol/m²</span></div>
-                    <div class="data-item"><i class="fa-solid fa-clock"></i> Last Update <span class="value">${satellite_data.last_updated}</span></div>
-                </div>
-
-                <div class="data-section">
-                    <h3><i class="fa-solid fa-chart-line"></i> Forecast (6 hours)</h3>
-                    <canvas id="forecastChart" width="300" height="200"></canvas>
-                </div>
-            `;
-
-            if(forecastChartInstance) {
-                forecastChartInstance.destroy();
-            }
-
-            const ctx = document.getElementById('forecastChart').getContext('2d');
-            forecastChartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: forecast_data.hours,
-                    datasets: [{
-                        label: 'PM2.5 Forecast (µg/m³)',
-                        data: forecast_data.pm25,
-                        borderColor: 'rgba(75, 192, 192, 1)',
-                        borderWidth: 2,
-                        fill: false,
-                        tension: 0.1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { title: { display: true, text: 'Time' } },
-                        y: { title: { display: true, text: 'PM2.5 (µg/m³)' } }
+            if (forecastChartInstance) {
+                forecastChartInstance.data.labels = forecast_data.hours;
+                forecastChartInstance.data.datasets[0].data = forecast_data.pm25;
+                forecastChartInstance.update();
+            } else {
+                const ctx = document.getElementById('forecastChart').getContext('2d');
+                forecastChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: forecast_data.hours,
+                        datasets: [{
+                            label: 'PM2.5 Forecast (µg/m³)',
+                            data: forecast_data.pm25,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        // NEW: Disable all animations to fix the loop bug
+                        animation: { duration: 0 },
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { title: { display: true, text: 'Time' } },
+                            y: { title: { display: true, text: 'PM2.5 (µg/m³)' } }
+                        }
                     }
-                }
-            });
-
+                });
+            }
+            loadingMessage.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
         } catch (err) {
             console.error(err);
-            dataDisplay.innerHTML = `<p class="loader">Failed to fetch data. Check server logs and try again.</p>`;
+            errorMessage.textContent = `Failed to fetch data. Check server logs and try again.`;
+            loadingMessage.classList.add('hidden');
+            errorMessage.classList.remove('hidden');
         }
     }
 
-    // --- Search Function (CORRECTED to use our own API) ---
     async function searchCity() {
         const city = searchInput.value.trim();
         if (!city) return;
+        initialMessage.classList.add('hidden');
+        resultsContainer.classList.add('hidden');
+        errorMessage.classList.add('hidden');
+        loadingMessage.classList.remove('hidden');
+        loadingMessage.firstChild.textContent = `Searching for "${city}"...`;
         try {
             const response = await fetch(`/api/geocode?city=${city}`);
             if (!response.ok) {
@@ -199,21 +194,18 @@
                 throw new Error(errData.error || 'City not found');
             }
             const results = await response.json();
-            updateDataForLocation(results.latitude, results.longitude);
+            await updateDataForLocation(results.latitude, results.longitude);
         } catch (err) {
             console.error(err);
-            dataDisplay.innerHTML = `<p class="loader" style="color: #dc3545;">Error: ${err.message}</p>`;
+            errorMessage.textContent = `Error: ${err.message}`;
+            loadingMessage.classList.add('hidden');
+            errorMessage.classList.remove('hidden');
         }
     }
 
-    searchInput.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            searchCity();
-        }
-    });
+    searchInput.addEventListener('keypress', function(e) { if (e.key === 'Enter') { searchCity(); } });
     document.getElementById('searchButton').addEventListener('click', searchCity);
     map.on('click', function(e) { updateDataForLocation(e.latlng.lat, e.latlng.lng); });
-
 </script>
 </body>
 </html>
