@@ -31,7 +31,7 @@ except Exception as e:
 
 # --- Helper Functions ---
 def get_aqi_level(pm25):
-    """Determines the AQI category and color from a PM2.5 value."""
+    """Determines the AQI category and color from a PM2.js value."""
     if pm25 is None or pm25 < 0: return {"level": "Unknown", "color": "#aaaaaa"}
     if pm25 <= 12.0: return {"level": "Good", "color": "#00e400"}
     if pm25 <= 35.4: return {"level": "Moderate", "color": "#ffff00"}
@@ -51,17 +51,17 @@ def get_tempo_data(lat, lon):
         os.environ['EARTHDATA_PASSWORD'] = os.environ.get('EARTHDATA_PASS')
 
         if not os.environ.get('EARTHDATA_USERNAME') or not os.environ.get('EARTHDATA_PASSWORD'):
-            raise ValueError("EARTHDATA_USER and EARTHDATA_PASS not found in .env file.")
+            raise ValueError("EARTHDATA_USER and EARTHDATA_PASS not found in environment.")
 
         auth = earthaccess.login(strategy="environment")
         if not auth.authenticated:
-            logging.warning("NASA Earthdata authentication failed. Check credentials in .env file.")
+            logging.warning("NASA Earthdata authentication failed. Check credentials.")
             return {'status': 'Auth Error', 'value': None}
 
         search_results = earthaccess.search_data(
             short_name='TEMPO_NRT_L2_NO2',
             bounding_box=(lon-0.1, lat-0.1, lon+0.1, lat+0.1),
-            count=1
+            count=1 # Get the single most recent file
         )
 
         if not search_results:
@@ -85,18 +85,13 @@ def get_tempo_data(lat, lon):
 
     except Exception as e:
         logging.error(f"❌ An error occurred during real TEMPO data fetch: {e}")
-        return {'status': 'Simulated (Error)', 'value': 1.5e-5}
+        return {'status': 'Simulated (Error)', 'value': 1.5e-5} # Fallback simulated value
 
 # --- Flask Routes ---
 @app.route('/')
 def index():
-    """Serves the landing page (index.html)."""
+    """Serves the main dashboard page (index.html)."""
     return render_template('index.html')
-
-@app.route('/dashboard')
-def dashboard():
-    """Serves the main interactive dashboard (dashboard.html)."""
-    return render_template('dashboard.html')
 
 @app.route('/api/geocode')
 def geocode():
@@ -135,30 +130,16 @@ def get_sensor_data():
         logging.error(f"❌ Could not fetch weather data: {e}")
         return jsonify({"error": "Failed to fetch weather data"}), 500
 
-    # 2. ✨ REAL-TIME Ground Air Quality Data (Using WAQI API) ✨
+    # 2. Fetch Ground Air Quality Data (Using WAQI API)
     pm25_value = 25.0  # Default fallback value
     location_name = "Regional Estimate"
     try:
-        waqi_api_key = "863296fb81e839b073505ca569860cdf03f1ce80" 
-        city = None
-        
-        try:
-            reverse_geo_url = f"https://geocoding-api.open-meteo.com/v1/reverse?latitude={lat}&longitude={lon}&count=1&language=en&format=json"
-            rg_response = requests.get(reverse_geo_url, timeout=5)
-            rg_response.raise_for_status()
-            rg_data = rg_response.json()
-            if rg_data.get('results'):
-                city = rg_data['results'][0].get('name')
-                logging.info(f"✅ Reverse geocoded coordinates to city: {city}")
-        except Exception as rg_e:
-            logging.warning(f"⚠️ Could not reverse geocode coordinates: {rg_e}. Will use geo-based search instead.")
-
-        if city:
-             waqi_url = f"https://api.waqi.info/feed/{city}/?token={waqi_api_key}"
-             logging.info(f"Attempting to fetch WAQI data using city: {city}")
-        else:
-             waqi_url = f"https://api.waqi.info/feed/geo:{lat};{lon}/?token={waqi_api_key}"
-             logging.info(f"Attempting to fetch WAQI data using coordinates: {lat},{lon}")
+        waqi_api_key = os.environ.get("WAQI_API_KEY")
+        if not waqi_api_key:
+            raise ValueError("WAQI_API_KEY not found in environment variables.")
+            
+        waqi_url = f"https://api.waqi.info/feed/geo:{lat};{lon}/?token={waqi_api_key}"
+        logging.info(f"Attempting to fetch WAQI data using coordinates: {lat},{lon}")
 
         waqi_response = requests.get(waqi_url, timeout=10)
         waqi_response.raise_for_status()
@@ -211,15 +192,34 @@ def get_sensor_data():
     
     if not forecast_results:
         for i in range(6):
-             forecast_time = datetime.now() + timedelta(hours=i + 1)
-             forecast_results.append({"hour": forecast_time.strftime("%H:%M"), "aqi": round(pm25_value, 2)})
-             
-    # 5. Assemble final JSON response
+            forecast_time = datetime.now() + timedelta(hours=i + 1)
+            forecast_results.append({"hour": forecast_time.strftime("%H:%M"), "aqi": round(pm25_value, 2)})
+            
+    # 5. Assemble and FORMAT the final JSON response for the frontend
+    forecast_hours = [item['hour'] for item in forecast_results]
+    forecast_pm25 = [item['aqi'] for item in forecast_results]
+
     response_data = {
-        "ground_data": {"location": location_name, "value": round(pm25_value, 2), "unit": "µg/m³", "level_info": get_aqi_level(pm25_value)},
-        "weather_data": weather_data,
-        "satellite_data": tempo_data,
-        "forecast_data": forecast_results
+        "ground_data": {
+            "pm25": round(pm25_value, 2),
+            "aqi": int(pm25_value * 2), # Note: This is a simple estimation, not an official AQI conversion.
+            "source": location_name,
+            "level_info": get_aqi_level(pm25_value)
+        },
+        "weather_data": {
+            "temp": weather_data.get('temperature_2m'),
+            "humidity": weather_data.get('relative_humidity_2m'),
+            "wind_speed": weather_data.get('wind_speed_10m'),
+        },
+        "satellite_data": {
+            "no2": f"{tempo_data.get('value'):.2e}" if tempo_data.get('value') is not None else "N/A",
+            "status": tempo_data.get('status'),
+            "last_updated": datetime.now().strftime("%H:%M UTC")
+        },
+        "forecast_data": {
+            "hours": forecast_hours,
+            "pm25": forecast_pm25
+        }
     }
     return jsonify(response_data)
 
@@ -227,4 +227,3 @@ if __name__ == '__main__':
     if not os.path.exists('temp_data'):
         os.makedirs('temp_data')
     app.run(debug=True, port=5000)
-
