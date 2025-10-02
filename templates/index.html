@@ -1,180 +1,222 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
+    <title>StarBugs - Air Quality Forecaster</title>
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hyperlocal Air Quality Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f0f4f8;
+        body { font-family: 'Roboto', sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+        #map { height: 100vh; width: 100%; }
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            width: 350px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
         }
-        .main-container {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            grid-template-rows: auto;
-            gap: 1.5rem;
-            padding: 2rem;
-            max-width: 1400px;
-            margin: auto;
+        .control-panel h2 { margin: 0 0 15px; font-size: 24px; font-weight: 700; color: #333; }
+        .search-container { display: flex; margin-bottom: 15px; }
+        .search-container input {
+            flex-grow: 1; border: 1px solid #ddd; border-radius: 4px 0 0 4px; padding: 10px;
         }
-        .card {
-            background-color: white;
-            border-radius: 0.75rem;
-            padding: 1.5rem;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        .search-container button {
+            border: none; background: #007bff; color: white; padding: 10px 15px; border-radius: 0 4px 4px 0; cursor: pointer;
         }
-        .card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-        }
-        .header { grid-column: 1 / -1; }
-        .aqi-card { grid-column: 1 / 2; grid-row: 2 / 3; background-color: #fef08a; }
-        .map-card { 
-            grid-column: 2 / 4; 
-            grid-row: 2 / 4; 
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-            background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 50 L80 50 M50 20 L50 80' stroke='%23d1d5db' stroke-width='1'/%3E%3C/svg%3E");
-            background-color: #f9fafb;
-        }
-        .weather-card { grid-column: 4 / 5; grid-row: 2 / 3; }
-        .satellite-card { grid-column: 1 / 3; grid-row: 4 / 5; }
-        .forecast-card { grid-column: 3 / 5; grid-row: 4 / 5; }
-        
-        @media (max-width: 1024px) {
-            .main-container {
-                grid-template-columns: 1fr 1fr;
-            }
-            .header, .aqi-card, .weather-card, .satellite-card, .forecast-card { grid-column: auto; }
-            .map-card { grid-column: 1 / -1; grid-row: 3 / 4; height: 300px; }
-        }
-         @media (max-width: 768px) {
-            .main-container {
-                grid-template-columns: 1fr;
-                padding: 1rem;
-            }
-            .map-card { grid-row: 2; }
-        }
+        .data-section { border-top: 1px solid #eee; padding-top: 15px; margin-top: 15px; }
+        .data-section h3 { margin: 0 0 10px; font-size: 18px; color: #555; }
+        .data-item { display: flex; align-items: center; margin-bottom: 8px; font-size: 16px; }
+        .data-item i { width: 25px; color: #007bff; }
+        .data-item .value { font-weight: 500; margin-left: auto; }
+        .aqi-level-display { text-align: center; padding: 10px; border-radius: 4px; font-weight: 700; color: white; margin-bottom: 10px; }
+        .loader { text-align: center; color: #888; }
+        .status-badge { font-size: 12px; font-weight: 500; padding: 2px 6px; border-radius: 10px; margin-left: 8px; color: white; }
+        .status-realtime { background-color: #28a745; }
+        .status-simulated { background-color: #ffc107; }
+        .status-error { background-color: #dc3545; }
     </style>
 </head>
-<body class="text-gray-800">
+<body>
 
-    <div class="main-container">
-        <!-- Header -->
-        <header class="header card flex flex-col md:flex-row justify-between items-center">
-            <div>
-                <h1 class="text-2xl font-bold text-gray-900">Hyperlocal Air Quality Dashboard</h1>
-                <p class="text-gray-500 mt-1">Real-time air quality monitoring with 6-hour forecasts powered by ground sensors, weather data, and NASA satellite imagery.</p>
-            </div>
-             <form id="landing-search-form" class="mt-4 md:mt-0 flex w-full md:w-auto">
-                <input type="text" id="landing-city-input" placeholder="Search for a city..." class="px-4 py-2 border rounded-l-lg w-full md:w-auto focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-r-md hover:bg-blue-700">Search</button>
-            </form>
-        </header>
-
-        <!-- AQI Card -->
-        <div class="aqi-card card flex flex-col justify-between">
-            <div class="flex justify-between items-center">
-                <h2 class="font-semibold">Current Air Quality</h2>
-                <span class="text-xs font-medium bg-green-600 text-white px-2 py-1 rounded-full">Live Data</span>
-            </div>
-            <div class="text-center my-4">
-                <p class="text-lg font-bold bg-white/50 rounded-lg py-2">Moderate</p>
-                <p class="text-5xl font-bold tracking-tight my-2">25.40</p>
-                <p class="text-sm text-gray-600">µg/m³</p>
-            </div>
-            <div>
-                <p class="text-xs text-gray-500">Data Source</p>
-                <p class="text-sm font-medium">Downtown San Francisco Monitoring Station</p>
-            </div>
-        </div>
-
-        <!-- Map Card Link -->
-<div id="map-link-card" class="map-card card text-center">
-    <a href="/dashboard">
-        <div class="p-4 bg-white/80 rounded-lg backdrop-blur-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-geo-alt-fill text-blue-500 mx-auto" viewBox="0 0 16 16">
-                <path d="..."/>
-            </svg>
-            <p class="mt-2 text-lg font-semibold">Interactive Map</p>
-        </div>
-    </a>
-</div>
-
-        <!-- Weather Card -->
-        <div class="weather-card card">
-            <h2 class="font-semibold mb-4">Current Weather</h2>
-            <div class="space-y-3">
-                <div class="flex items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-red-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H9a1 1 0 00-1 1v10a5 5 0 005 5h1a1 1 0 001-1v-2a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1h1a3 3 0 003-3v-2a1 1 0 00-1-1h-1z" /></svg>
-                    <div>
-                        <p class="text-sm text-gray-500">Temperature</p>
-                        <p class="font-bold text-lg">18.5°C</p>
-                    </div>
-                </div>
-                <div class="flex items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 18a4.6 4.4 0 010-9 5 4.5 0 0111 2h1a3.5 3.5 0 010 7h-1" /></svg>
-                    <div>
-                        <p class="text-sm text-gray-500">Humidity</p>
-                        <p class="font-bold text-lg">72%</p>
-                    </div>
-                </div>
-                <div class="flex items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                    <div>
-                        <p class="text-sm text-gray-500">Wind Speed</p>
-                        <p class="font-bold text-lg">12.3 km/h</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Satellite Card -->
-        <div class="card satellite-card">
-            <div class="flex justify-between items-center">
-                <h2 class="font-semibold">🛰️ NASA TEMPO Satellite</h2>
-                <span class="text-xs font-medium bg-gray-200 text-gray-700 px-2 py-1 rounded-full">Inactive</span>
-            </div>
-             <div class="text-center my-4">
-                <p class="text-4xl font-bold tracking-tight my-2">0.023 DU</p>
-                <p class="text-sm text-gray-600">Tropospheric NO₂ Column</p>
-            </div>
-             <div>
-                <p class="text-xs text-gray-500">Last Updated</p>
-                <p class="text-sm font-medium">11:42:40 AM</p>
-            </div>
-        </div>
-        
-        <!-- Forecast Card -->
-        <div class="card forecast-card">
-            <h2 class="font-semibold mb-2">6-Hour PM2.5 Forecast</h2>
-            <div class="bg-gray-100 rounded-lg p-4 flex items-center justify-center h-48">
-                 <p class="text-gray-500">Chart will be displayed on the dashboard.</p>
-            </div>
-        </div>
+<div id="map"></div>
+<div class="control-panel">
+    <h2><i class="fa-solid fa-satellite-dish"></i> StarBugs</h2>
+    
+    <div class="search-container">
+        <input type="text" id="citySearchInput" placeholder="e.g., Delhi, IN">
+        <button id="searchButton"><i class="fa-solid fa-magnifying-glass"></i></button>
     </div>
 
-<script>
-    document.getElementById('map-link-card').addEventListener('click', () => {
-        window.location.href = 'dashboard.html';
-    });
+    <div id="data-display" class="loader">
+        <p>Search for a city or click the map.</p>
+    </div>
+</div>
 
-    document.getElementById('landing-search-form').addEventListener('submit', (e) => {
-        e.preventDefault();
-        const city = document.getElementById('landing-city-input').value.trim();
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    // --- Map Initialization ---
+    const map = L.map('map').setView([20.5937, 78.9629], 5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        maxZoom: 20
+    }).addTo(map);
+
+    let currentMarker = null;
+    const dataDisplay = document.getElementById('data-display');
+    const searchInput = document.getElementById('citySearchInput');
+
+    function createColoredIcon(color) {
+        const markerHtmlStyles = `
+            background-color: ${color};
+            width: 2rem;
+            height: 2rem;
+            display: block;
+            left: -1rem;
+            top: -1rem;
+            position: relative;
+            border-radius: 2rem 2rem 0;
+            transform: rotate(45deg);
+            border: 1px solid #FFFFFF`;
+        return L.divIcon({
+          className: "my-custom-pin",
+          iconAnchor: [0, 24],
+          popupAnchor: [0, -36],
+          html: `<span style="${markerHtmlStyles}" />`
+        })
+    }
+
+    // --- Fetch & Display Data ---
+    async function updateDataForLocation(lat, lon) {
+        dataDisplay.innerHTML = '<p class="loader">Fetching latest data...</p>';
+        if (currentMarker) { map.removeLayer(currentMarker); }
+
+        currentMarker = L.marker([lat, lon], { icon: createColoredIcon('gray') }).addTo(map);
+        map.flyTo([lat, lon], 11);
+
+        try {
+            const response = await fetch(`/api/data?lat=${lat}&lon=${lon}`);
+            if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+            const data = await response.json();
+
+            const markerColor = data.ground_data.level_info.color;
+            currentMarker.setIcon(createColoredIcon(markerColor));
+
+            const { ground_data, weather_data, satellite_data, forecast_data } = data;
+
+            let tempoStatus = satellite_data.status || "Simulated";
+            let statusClass = 'status-simulated';
+            if (tempoStatus === 'Real-Time') statusClass = 'status-realtime';
+            else if (tempoStatus === 'Error') statusClass = 'status-error';
+
+            dataDisplay.innerHTML = `
+                <div class="aqi-level-display" style="background-color: ${ground_data.level_info.color};">
+                    AQI Level: ${ground_data.level_info.level}
+                </div>
+
+                <div class="data-section">
+                    <h3><i class="fa-solid fa-smog"></i> Air Quality</h3>
+                    <div class="data-item"><i class="fa-solid fa-wind"></i> PM2.5 <span class="value">${ground_data.pm25} µg/m³</span></div>
+                    <div class="data-item"><i class="fa-solid fa-cloud"></i> AQI <span class="value">${ground_data.aqi}</span></div>
+                    <div class="data-item"><i class="fa-solid fa-location-dot"></i> Source <span class="value">${ground_data.source}</span></div>
+                </div>
+
+                <div class="data-section">
+                    <h3><i class="fa-solid fa-cloud-sun-rain"></i> Weather</h3>
+                    <div class="data-item"><i class="fa-solid fa-temperature-three-quarters"></i> Temp <span class="value">${weather_data.temp} °C</span></div>
+                    <div class="data-item"><i class="fa-solid fa-droplet"></i> Humidity <span class="value">${weather_data.humidity}%</span></div>
+                    <div class="data-item"><i class="fa-solid fa-wind"></i> Wind <span class="value">${weather_data.wind_speed} km/h</span></div>
+                </div>
+
+                <div class="data-section">
+                    <h3><i class="fa-solid fa-satellite"></i> TEMPO Satellite 
+                        <span class="status-badge ${statusClass}">${tempoStatus}</span>
+                    </h3>
+                    <div class="data-item"><i class="fa-solid fa-industry"></i> NO₂ <span class="value">${satellite_data.no2} DU</span></div>
+                    <div class="data-item"><i class="fa-solid fa-clock"></i> Last Update <span class="value">${satellite_data.last_updated}</span></div>
+                </div>
+
+                <div class="data-section">
+                    <h3><i class="fa-solid fa-chart-line"></i> Forecast (6 hours)</h3>
+                    <canvas id="forecastChart" width="300" height="200"></canvas>
+                </div>
+            `;
+
+            const ctx = document.getElementById('forecastChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: forecast_data.hours,
+                    datasets: [{
+                        label: 'PM2.5 Forecast (µg/m³)',
+                        data: forecast_data.pm25,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Time (hours)' } },
+                        y: { title: { display: true, text: 'PM2.5 (µg/m³)' } }
+                    }
+                }
+            });
+
+        } catch (err) {
+            console.error(err);
+            dataDisplay.innerHTML = `<p class="loader">Failed to fetch data. Try again.</p>`;
+        }
+    }
+
+    // --- Search Function ---
+    async function searchCity() {
+        const city = searchInput.value.trim();
+        if (!city) return;
+        try {
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${city}`);
+            if (!response.ok) throw new Error(`Geocode error`);
+            const results = await response.json();
+            if (results.length === 0) {
+                dataDisplay.innerHTML = `<p class="loader">No results found for "${city}".</p>`;
+                return;
+            }
+            const { lat, lon } = results[0];
+            updateDataForLocation(lat, lon);
+        } catch (err) {
+            console.error(err);
+            dataDisplay.innerHTML = `<p class="loader">Error searching for city.</p>`;
+        }
+    }
+
+    document.getElementById('searchButton').addEventListener('click', searchCity);
+    map.on('click', function(e) { updateDataForLocation(e.latlng.lat, e.latlng.lng); });
+
+    // --- Handle ?city= query from index.html ---
+    window.addEventListener('DOMContentLoaded', async () => {
+        const params = new URLSearchParams(window.location.search);
+        const city = params.get('city');
         if (city) {
-            const encodedCity = encodeURIComponent(city);
-            window.location.href = `dashboard.html?city=${encodedCity}`;
+            searchInput.value = city;
+            await searchCity();
         }
     });
 </script>
-
 </body>
 </html>
